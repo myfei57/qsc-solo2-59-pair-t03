@@ -23,6 +23,7 @@ from .clock import ManualClock, SystemClock
 from .config import config_to_mapping, default_config, load_config
 from .console.server import ConsoleServer, probe_endpoints
 from .errors import StoreError
+from .grading.cli import build_grading_parser, run_grading
 
 DEFAULT_PROBE_PATHS = ("/api/status", "/api/readiness", "/api/topology", "/api/audit", "/api/racks")
 
@@ -212,6 +213,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     reset = sub.add_parser("reset", help="清掉落盘的平台计数", parents=[common])
     reset.set_defaults(func=_cmd_reset)
+
+    build_grading_parser(sub)
     return parser
 
 
@@ -225,6 +228,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if getattr(args, "command", None) == "grading":
+            return run_grading(args)
         return int(args.func(args))
     except StoreError as error:
         print(json.dumps(error.as_record(), ensure_ascii=False), file=sys.stderr)
