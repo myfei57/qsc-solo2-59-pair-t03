@@ -336,6 +336,38 @@ class QuotaLimits:
 
 
 @dataclass(frozen=True)
+class ScreeningLimits:
+    """批次一致性筛查阈值与自适应判据边界。"""
+
+    capacity_min_ah: float
+    capacity_max_ah: float
+    delta_max_mv: float
+    adaptive_min_samples: int
+    adaptive_z: float
+    batch_max_capacity_spread_ah: float
+    batch_max_delta_spread_mv: float
+    max_outlier_ratio: float
+
+    @classmethod
+    def from_mapping(cls, section: Mapping[str, Any]) -> "ScreeningLimits":
+        limits = cls(
+            capacity_min_ah=_number(section, "capacity_min_ah", minimum=0.0),
+            capacity_max_ah=_number(section, "capacity_max_ah", minimum=0.0),
+            delta_max_mv=_number(section, "delta_max_mv", minimum=0.0),
+            adaptive_min_samples=_integer(section, "adaptive_min_samples", minimum=3),
+            adaptive_z=_number(section, "adaptive_z", minimum=0.0),
+            batch_max_capacity_spread_ah=_number(section, "batch_max_capacity_spread_ah", minimum=0.0),
+            batch_max_delta_spread_mv=_number(section, "batch_max_delta_spread_mv", minimum=0.0),
+            max_outlier_ratio=_number(section, "max_outlier_ratio", minimum=0.0),
+        )
+        if limits.capacity_min_ah >= limits.capacity_max_ah:
+            raise ConfigError("容量规格下限必须小于上限", component="config")
+        if limits.max_outlier_ratio > 1.0:
+            raise ConfigError("离群比例上限不能大于 1", component="config")
+        return limits
+
+
+@dataclass(frozen=True)
 class StationConfig:
     """一份完整的电站配置。"""
 
@@ -350,6 +382,7 @@ class StationConfig:
     soc: SocLimits
     balance: BalanceLimits
     quota: QuotaLimits
+    screening: ScreeningLimits
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "StationConfig":
@@ -373,6 +406,7 @@ class StationConfig:
             soc=SocLimits.from_mapping(_section(limits, "soc")),
             balance=BalanceLimits.from_mapping(_section(limits, "balance")),
             quota=QuotaLimits.from_mapping(_section(limits, "quota")),
+            screening=ScreeningLimits.from_mapping(_section(limits, "screening")),
         )
 
 
@@ -403,6 +437,7 @@ def default_config() -> StationConfig:
         soc=SocLimits(280.0, 0.98, 7200.0, 3.0, 50.0),
         balance=BalanceLimits(25.0, 4.0, 2.0, 600.0, 2),
         quota=QuotaLimits(24.0, 2000.0, 2000.0, 1.2, 0.4),
+        screening=ScreeningLimits(266.0, 294.0, 60.0, 8, 3.5, 8.0, 40.0, 0.25),
     )
 
 
@@ -486,6 +521,16 @@ def config_to_mapping(cfg: StationConfig) -> dict:
                 "discharge_quota_kwh": cfg.quota.discharge_quota_kwh,
                 "tariff_peak": cfg.quota.tariff_peak,
                 "tariff_valley": cfg.quota.tariff_valley,
+            },
+            "screening": {
+                "capacity_min_ah": cfg.screening.capacity_min_ah,
+                "capacity_max_ah": cfg.screening.capacity_max_ah,
+                "delta_max_mv": cfg.screening.delta_max_mv,
+                "adaptive_min_samples": cfg.screening.adaptive_min_samples,
+                "adaptive_z": cfg.screening.adaptive_z,
+                "batch_max_capacity_spread_ah": cfg.screening.batch_max_capacity_spread_ah,
+                "batch_max_delta_spread_mv": cfg.screening.batch_max_delta_spread_mv,
+                "max_outlier_ratio": cfg.screening.max_outlier_ratio,
             },
         },
     }

@@ -66,6 +66,8 @@ class Api:
         add("GET", "/api/grid", lambda params, body: self._platform.grid_snapshot())
         add("GET", "/api/soc", lambda params, body: self._platform.soc_snapshot())
         add("GET", "/api/balance", lambda params, body: self._platform.balance_snapshot())
+        add("GET", "/api/screening", lambda params, body: self._platform.screening_snapshot())
+        add("GET", "/api/screening/{batch_id}", lambda params, body: self._platform.batch_screening(str(params.get("batch_id", ""))))
         add("GET", "/api/quota", lambda params, body: self._platform.quota_snapshot())
         add("GET", "/api/audit", self._audit)
         add("GET", "/api/audit/report", lambda params, body: self._platform.audit.report())
@@ -91,6 +93,9 @@ class Api:
         add("POST", "/api/temperature", self._temperature)
         add("POST", "/api/replace-pack", self._replace_pack)
         add("POST", "/api/calibrate", self._calibrate)
+        add("POST", "/api/screening/record", self._screening_record)
+        add("POST", "/api/screening/assess", self._screening_assess)
+        add("POST", "/api/screening/review", self._screening_review)
         add("POST", "/api/fault", self._fault)
         add("POST", "/api/fault/clear", self._fault_clear)
         add("POST", "/api/fire/drill", self._drill)
@@ -224,6 +229,31 @@ class Api:
         return self._platform.calibrate_soc(
             soc_pct=_as_float(body, "soc_pct", 50.0),
             source=str(body.get("source", "console")),
+        )
+
+    def _screening_record(self, params: dict, body: dict) -> dict:
+        batch_id = str(body.get("batch_id", ""))
+        cell_id = str(body.get("cell_id", ""))
+        if not batch_id or not cell_id:
+            raise StoreError("缺少 batch_id 或 cell_id", component="console")
+        return self._platform.record_cell_calibration(
+            batch_id=batch_id,
+            cell_id=cell_id,
+            capacity_ah=_as_float(body, "capacity_ah", 0.0),
+            delta_mv=_as_float(body, "delta_mv", 0.0),
+            source=str(body.get("source", "console")),
+        )
+
+    def _screening_assess(self, params: dict, body: dict) -> dict:
+        return self._platform.assess_batch(str(body.get("batch_id", "")))
+
+    def _screening_review(self, params: dict, body: dict) -> dict:
+        return self._platform.review_screening(
+            str(body.get("batch_id", "")),
+            str(body.get("action", "")),
+            cell_id=body.get("cell_id"),
+            reviewer=str(body.get("reviewer", "operator")),
+            note=str(body.get("note", "")),
         )
 
     def _fault(self, params: dict, body: dict) -> dict:

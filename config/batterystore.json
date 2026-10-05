@@ -78,6 +78,16 @@
       "discharge_quota_kwh": 2000.0,
       "tariff_peak": 1.2,
       "tariff_valley": 0.4
+    },
+    "screening": {
+      "capacity_min_ah": 266.0,
+      "capacity_max_ah": 294.0,
+      "delta_max_mv": 60.0,
+      "adaptive_min_samples": 8,
+      "adaptive_z": 3.5,
+      "batch_max_capacity_spread_ah": 8.0,
+      "batch_max_delta_spread_mv": 40.0,
+      "max_outlier_ratio": 0.25
     }
   }
 }

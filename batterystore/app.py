@@ -33,6 +33,7 @@ from .rack.cells import Cell
 from .rack.mapping import RackMapping
 from .rack.pack import Pack
 from .rack.rack import Rack
+from .screening.registry import ScreeningRegistry
 from .soc.soc import SocEstimator
 from .store.journal import JsonlJournal
 from .store.jsonfile import JsonStore
@@ -106,6 +107,7 @@ class Platform:
         self.soc = SocEstimator(self.config.soc, self.bms.calibration)
         self.balancer = Balancer(self.config.balance)
         self.quota = QuotaLedger(self.config.quota)
+        self.screening = ScreeningRegistry(self.config.screening, self.clock)
 
         self._cycles = 0
         self._operations = 0
@@ -130,6 +132,7 @@ class Platform:
             ("station", "soc", "state-of-charge"),
             ("station", "balance", "cell-balancer"),
             ("station", "quota", "quota-ledger"),
+            ("station", "screening", "batch-screening"),
             ("station", "audit", "run-audit"),
         ):
             self.namespaces.register(area, device, kind)
@@ -456,6 +459,93 @@ class Platform:
             summary = self._record_operation(op_id, "calibrate", report)
             return {**report, **summary}
 
+    def record_cell_calibration(
+        self,
+        batch_id: str,
+        cell_id: str,
+        capacity_ah: float,
+        delta_mv: float,
+        source: str = "manual",
+    ) -> dict:
+        """登记一颗单体的标定记录；补录与修订共用此入口，revision 递增。"""
+
+        with self._lock:
+            entry = self.screening.record(batch_id, cell_id, capacity_ah, delta_mv, source=source)
+            self.bus.publish(
+                Event.of(
+                    "screening",
+                    "screening",
+                    "calibration_recorded",
+                    station=self.station,
+                    severity="notice",
+                    **entry,
+                )
+            )
+            return entry
+
+    def assess_batch(self, batch_id: str) -> dict:
+        """按当前生效数据重算一批的一致性结论，生成新一代评估。
+
+        重算只朝保守方向改处置：新判离群的单体进入隔离、新判 hold 的批次进入
+        整批隔离；已经隔离的单体与批次不会被重算自动放回产线。
+        """
+
+        with self._lock:
+            report = self.screening.assess(batch_id)
+            self.bus.publish(
+                Event.of(
+                    "screening",
+                    "screening",
+                    "batch_assessed",
+                    station=self.station,
+                    severity="warning" if report["decision"] == "hold" else "notice",
+                    batch_id=batch_id,
+                    generation=report["generation"],
+                    decision=report["decision"],
+                    criterion=report["criterion"],
+                    outliers=len(report["outliers"]),
+                    re_isolated=len(report["re_isolated"]),
+                )
+            )
+            return report
+
+    def review_screening(
+        self,
+        batch_id: str,
+        action: str,
+        cell_id: str | None = None,
+        reviewer: str = "operator",
+        note: str = "",
+    ) -> dict:
+        """人工复核：解除隔离放行（release）或判退（reject），只接受隔离中的对象。"""
+
+        with self._lock:
+            result = self.screening.review(batch_id, action, cell_id=cell_id, reviewer=reviewer, note=note)
+            self.bus.publish(
+                Event.of(
+                    "screening",
+                    "screening",
+                    "reviewed",
+                    station=self.station,
+                    severity="notice",
+                    review_action=result["action"],
+                    **{
+                        key: value
+                        for key, value in result.items()
+                        if value is not None and key not in ("action", "message", "component", "type", "topic")
+                    },
+                )
+            )
+            return result
+
+    def batch_screening(self, batch_id: str) -> dict:
+        """返回一批的筛查台账：最新结论、历代评估摘要与逐颗处置。"""
+
+        return self.screening.batch_report(batch_id)
+
+    def screening_snapshot(self) -> dict:
+        return self.screening.snapshot().as_dict()
+
     def report_fault(self, rack_id: str | None = None, code: str = "bms_fault") -> dict:
         """登记一次故障上报（可并发调用）。"""
 
@@ -767,6 +857,7 @@ class Platform:
             "grid": self.grid_snapshot(),
             "soc": self.soc_snapshot(),
             "balance": self.balance_snapshot(),
+            "screening": self.screening_snapshot(),
         }
 
     def snapshot(self) -> dict:
@@ -804,5 +895,6 @@ def build_platform(
             soc=resolved.soc,
             balance=resolved.balance,
             quota=resolved.quota,
+            screening=resolved.screening,
         )
     return Platform(config=resolved, clock=clock, rack_count=rack_count)
